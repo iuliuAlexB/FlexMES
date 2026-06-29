@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% block title %}Cockpit Manager — FlexMES{% endblock %}
+
+{% block content %}
+<style>
+    body { overflow: hidden; }
+</style>
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">🎛 Gestionare Comenzi</h4>
+    <button class="btn btn-dark" data-bs-toggle="modal" data-bs-target="#createWoModal">
+        + Comandă Nouă
+    </button>
+</div>
+
+<!-- Work Orders table -->
+<div class="card border-0 shadow-sm mb-4" id="wo-table-card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead class="table-dark" style="position: sticky; top: 0; z-index: 1;">
+                <tr>
+                    <th>Comandă</th>
+                    <th>Produs</th>
+                    <th>Cantitate Planificată</th>
+                    <th>Cantitate Conformă</th>
+                    <th>Cantitate Rebut</th>
+                    <th>Status</th>
+                    <th>Stație Curentă</th>
+                    <th>Data Start</th>
+                    <th>Data Finalizare</th>
+                    <th>Acțiuni</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for item in wo_data %}
+            <tr>
+                <td class="fw-bold">{{ item.wo.order_number }}</td>
+                <td>
+                    <span class="badge bg-secondary me-1">{{ item.wo.product.code }}</span>
+                    {{ item.wo.product.name }}
+                </td>
+                <td>{{ item.wo.qty_planned }} buc.</td>
+                <td id="good-{{ item.wo.id }}">
+                    {% if item.good_qty is not none %}
+                        <span class="text-success fw-semibold">{{ item.good_qty }}</span>
+                    {% else %}
+                        <span class="text-muted">N/A</span>
+                    {% endif %}
+                </td>
+                <td id="scrap-{{ item.wo.id }}">
+                    {% if item.scrap_qty is not none %}
+                        <span class="text-danger fw-semibold">{{ item.scrap_qty }}</span>
+                    {% else %}
+                        <span class="text-muted">N/A</span>
+                    {% endif %}
+                </td>
+                <td id="status-{{ item.wo.id }}">
+                    <span class="badge
+                        {% if item.wo.status == 'planned' %}bg-secondary
+                        {% elif item.wo.status == 'in_progress' %}bg-primary
+                        {% elif item.wo.status == 'completed' %}bg-success
+                        {% else %}bg-danger{% endif %}">
+                        {% if item.wo.status == 'planned' %}Planificat
+                        {% elif item.wo.status == 'in_progress' %}În Execuție
+                        {% elif item.wo.status == 'completed' %}Finalizat
+                        {% else %}Anulat{% endif %}
+                    </span>
+                </td>
+                <td id="station-{{ item.wo.id }}">
+                    {% set active_op = item.wo.operations | selectattr("status","eq","in_progress") | first %}
+                    {% if active_op %}
+                        <span class="badge bg-primary">{{ active_op.station.code }}</span>
+                        {{ active_op.station.name }}
+                    {% elif item.wo.status == 'completed' %}
+                        <span class="text-success small">✓ Toate finalizate</span>
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
+                <td class="small text-muted">
+                    {% if item.wo.started_at %}{{ item.wo.started_at.strftime('%d.%m %H:%M') }}{% else %}—{% endif %}
+                </td>
+                <td id="completed-{{ item.wo.id }}" class="small text-muted">
+                    {% if item.wo.completed_at %}{{ item.wo.completed_at.strftime('%d.%m %H:%M') }}{% else %}—{% endif %}
+                </td>
+                <td>
+                    {% if item.wo.status == 'planned' %}
+                    <form method="post" action="/workorders/{{ item.wo.id }}/start" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-sm btn-success">▶ Lansează</button>
+                    </form>
+                    {% endif %}
+                    {% if item.wo.status in ('planned', 'in_progress') %}
+                    {% set has_logs = item.wo.production_logs | length > 0 %}
+                    <form method="post" action="/workorders/{{ item.wo.id }}/cancel" class="d-inline"
+                          onsubmit="return confirm('Ești sigur că vrei să anulezi {{ item.wo.order_number }}?')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger"
+                                {% if item.wo.status == 'in_progress' and has_logs %}
+                                disabled title="Nu se poate anula — există log-uri de producție"
+                                {% endif %}>
+                            ✕ Anulează
+                        </button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="10" class="text-center text-muted py-4">Nu există comenzi de producție.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Work Order State Transition rules reminder -->
+<div class="card border-0 shadow-sm bg-light">
+    <div class="card-body">
+        <h6 class="text-muted mb-2">Reguli de tranziție — Comenzi de Producție</h6>
+        <div class="d-flex flex-wrap gap-2 align-items-center small">
+            <span class="badge bg-secondary">Planificat</span>
+            <span>→</span>
+            <span class="badge bg-primary">În Execuție</span>
+            <span>→</span>
+            <span class="badge bg-success">Finalizat (auto)</span>
+            <span class="ms-3 text-muted">|</span>
+            <span class="ms-3 badge bg-secondary">Planificat</span>
+            <span>→</span>
+            <span class="badge bg-danger">Anulat</span>
+            <span class="ms-3 text-muted">|</span>
+            <span class="ms-3 badge bg-primary">În Execuție</span>
+            <span>→</span>
+            <span class="badge bg-danger">Anulat (fără log-uri)</span>
+        </div>
+    </div>
+</div>
+
+<!-- Create WO Modal -->
+<div class="modal fade" id="createWoModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="/workorders">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div class="modal-header">
+                    <h5 class="modal-title">Comandă de Producție Nouă</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Produs</label>
+                        <select name="product_id" class="form-select" id="productSelect" required onchange="loadRouting(this.value)">
+                            <option value="">— Selectează produs —</option>
+                            {% for p in products %}
+                            <option value="{{ p.id }}">{{ p.code }} — {{ p.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div id="routingPreview" class="mb-3 d-none">
+                        <label class="form-label text-muted small">Rută producție:</label>
+                        <div id="routingChips"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Cantitate Planificată</label>
+                        <input type="number" name="qty_planned" class="form-control" min="1" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Anulează</button>
+                    <button type="submit" class="btn btn-dark">Creează Comanda</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function loadRouting(productId) {
+    const preview = document.getElementById('routingPreview');
+    const chips = document.getElementById('routingChips');
+    if (!productId) { preview.classList.add('d-none'); return; }
+    fetch(`/api/routing/${productId}`)
+        .then(r => r.json())
+        .then(data => {
+            if (!data.length) {
+                chips.innerHTML = '<span class="text-danger small">⚠ Niciun routing definit pentru acest produs!</span>';
+            } else {
+                chips.innerHTML = data.map((r, i) =>
+                    `${i > 0 ? '<span class="text-muted mx-1">→</span>' : ''}<span class="badge bg-dark">S${r.station_id}</span>`
+                ).join('');
+            }
+            preview.classList.remove('d-none');
+        });
+}
+
+function statusBadge(status) {
+    const map = {
+        'planned': 'bg-secondary',
+        'in_progress': 'bg-primary',
+        'completed': 'bg-success',
+        'cancelled': 'bg-danger'
+    };
+    return map[status] || 'bg-secondary';
+}
+
+function statusLabel(status) {
+    const map = {
+        'planned': 'Planificat',
+        'in_progress': 'În Execuție',
+        'completed': 'Finalizat',
+        'cancelled': 'Anulat'
+    };
+    return map[status] || status;
+}
+
+function loadWoStatus() {
+    fetch('/api/workorders/status')
+        .then(r => r.json())
+        .then(rows => {
+            rows.forEach(wo => {
+                const statusEl = document.getElementById(`status-${wo.id}`);
+                if (statusEl) {
+                    statusEl.innerHTML = `<span class="badge ${statusBadge(wo.status)}">${statusLabel(wo.status)}</span>`;
+                }
+
+                const stationEl = document.getElementById(`station-${wo.id}`);
+                if (stationEl) {
+                    if (wo.station_display === '✓ Toate finalizate') {
+                        stationEl.innerHTML = `<span class="text-success small">${wo.station_display}</span>`;
+                    } else if (wo.station_display === '—') {
+                        stationEl.innerHTML = '—';
+                    } else {
+                        // Statie activa — extragem codul si numele
+                        const parts = wo.station_display.split(' ');
+                        const code = parts[0];
+                        const name = parts.slice(1).join(' ');
+                        stationEl.innerHTML = `<span class="badge bg-primary">${code}</span> ${name}`;
+                    }
+                }
+
+                const goodEl = document.getElementById(`good-${wo.id}`);
+                if (goodEl) {
+                    goodEl.innerHTML = wo.good_qty !== null
+                        ? `<span class="text-success fw-semibold">${wo.good_qty}</span>`
+                        : `<span class="text-muted">N/A</span>`;
+                }
+
+                const scrapEl = document.getElementById(`scrap-${wo.id}`);
+                if (scrapEl) {
+                    scrapEl.innerHTML = wo.scrap_qty !== null
+                        ? `<span class="text-danger fw-semibold">${wo.scrap_qty}</span>`
+                        : `<span class="text-muted">N/A</span>`;
+                }
+
+                const completedEl = document.getElementById(`completed-${wo.id}`);
+                if (completedEl) {
+                    completedEl.innerHTML = wo.completed_at || '—';
+                }
+            });
+        });
+}
+
+function resizeCockpit() {
+    const navbar = document.querySelector('nav').offsetHeight;
+    const header = document.querySelector('h4').offsetHeight;
+    const legend = document.querySelector('.card.bg-light').offsetHeight;
+    const banner = document.querySelector('.alert') ?
+                   document.querySelector('.alert').offsetHeight + 16 : 0;
+    const padding = 48;
+    const available = window.innerHeight - navbar - header - legend - banner - padding;
+
+    const tableWrapper = document.querySelector('#wo-table-card .table-responsive');
+    if (tableWrapper) {
+        tableWrapper.style.height = available + 'px';
+        tableWrapper.style.overflowY = 'auto';
+    }
+}
+
+loadWoStatus();
+setInterval(loadWoStatus, 10000);
+resizeCockpit();
+window.addEventListener('resize', resizeCockpit);
+// Recalculeaza cand banner-ul apare sau dispare
+const observer = new MutationObserver(resizeCockpit);
+observer.observe(document.body, { childList: true, subtree: true });
+
+</script>
+{% endblock %}

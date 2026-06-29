@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% block title %}Tablou de Bord — FlexMES{% endblock %}
+
+{% block content %}
+<h4 class="mb-3">📊 Tablou de Bord</h4>
+    
+<!-- Global KPI cards -->
+<div class="row g-3 mb-4" id="kpiRow">
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body text-center">
+                <div class="text-muted small mb-1">Randament Prima Trecere (FPY)</div>
+                <div class="fs-2 fw-bold text-success" id="kpi-fpy">—</div>
+                <div class="text-muted small">ISO 22400</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body text-center">
+                <div class="text-muted small mb-1">Productivitate</div>
+                <div class="fs-2 fw-bold text-primary" id="kpi-throughput">—</div>
+                <div class="text-muted small">unități bune / oră</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body text-center">
+                <div class="text-muted small mb-1">Rată Rebut</div>
+                <div class="fs-2 fw-bold text-danger" id="kpi-scrap">—</div>
+                <div class="text-muted small">ISO 22400</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3">
+    <!-- Work Order cards -->
+    <div class="col-lg-8">
+        <h6 class="text-muted text-uppercase fw-bold mb-2">Comenzi de Producție</h6>
+        <div id="wo-cards">
+            <div class="text-center text-muted py-3">
+                <div class="spinner-border spinner-border-sm"></div>
+                Se încarcă...
+            </div>
+        </div>
+    </div>
+
+    <!-- MQTT Activity Feed -->
+    <div class="col-lg-4">
+        <h6 class="text-muted text-uppercase fw-bold mb-2">Activitate IIoT Live</h6>
+        <div class="card border-0 shadow-sm">
+            <div class="card-body p-0">
+                <div id="mqttFeed" style="max-height:500px; overflow-y:auto;">
+                    <div class="text-center text-muted py-3 small">Se încarcă...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Chart Modal -->
+<div class="modal fade" id="chartModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="chartModalTitle">Grafic Producție</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <canvas id="woChart" height="120"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let chartInstance = null;
+
+function loadKpis() {
+    fetch('/api/kpis')
+        .then(r => r.json())
+        .then(d => {
+            document.getElementById('kpi-fpy').textContent = d.fpy !== null ? d.fpy + '%' : 'N/A';
+            document.getElementById('kpi-throughput').textContent = d.throughput !== null ? d.throughput + ' u/h' : 'N/A';
+            document.getElementById('kpi-scrap').textContent = d.scrap_rate !== null ? d.scrap_rate + '%' : 'N/A';
+            resizeCards();
+        });
+}
+
+function loadFeed() {
+    fetch('/api/mqtt/feed')
+        .then(r => r.json())
+        .then(msgs => {
+            const el = document.getElementById('mqttFeed');
+            if (!msgs.length) {
+                el.innerHTML = '<div class="text-center text-muted py-3 small">Nicio activitate</div>';
+                return;
+            }
+            el.innerHTML = msgs.reverse().map(m => `
+                <div class="border-bottom px-3 py-2 small">
+                    <span class="badge bg-dark me-1">${m.station}</span>
+                    WO-${String(m.work_order_id).padStart(3,'0')} &nbsp;
+                    <span class="text-success">✓ ${m.qty_good}</span>
+                    <span class="text-danger ms-1">✗ ${m.qty_scrap}</span>
+                    <div class="text-muted" style="font-size:.7rem;">${m.timestamp.replace('T',' ').substring(0,19)}</div>
+                </div>
+            `).join('');
+        });
+}
+
+function showChart(woId, orderNumber) {
+    document.getElementById('chartModalTitle').textContent = `Grafic Producție — ${orderNumber}`;
+    const modal = new bootstrap.Modal(document.getElementById('chartModal'));
+    modal.show();
+    fetch(`/api/workorders/${woId}/chart`)
+        .then(r => r.json())
+        .then(data => {
+            const ctx = document.getElementById('woChart').getContext('2d');
+            if (chartInstance) chartInstance.destroy();
+            chartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.labels,
+                    datasets: [
+                        { label: 'Unități Bune', data: data.good, backgroundColor: 'rgba(25,135,84,.7)' },
+                        { label: 'Rebut', data: data.scrap, backgroundColor: 'rgba(220,53,69,.7)' }
+                    ]
+                },
+                options: { responsive: true, plugins: { legend: { position: 'top' } } }
+            });
+        });
+}
+
+function loadWoCards() {
+    const container = document.getElementById('wo-cards');
+    const activeEl = document.activeElement;
+    if (container.contains(activeEl) && activeEl.tagName === 'INPUT') return;
+
+    fetch('/api/workorders/cards')
+        .then(r => r.json())
+        .then(wos => renderWoCards(wos));
+}
+
+function renderWoCards(wos) {
+    const container = document.getElementById('wo-cards');
+    if (!wos.length) {
+        container.innerHTML = '<div class="alert alert-info">Nu există comenzi de producție.</div>';
+        resizeCards();
+        return;
+    }
+
+    container.innerHTML = wos.map(wo => `
+        <div class="card border-0 shadow-sm mb-3
+            ${wo.has_anomaly ? 'border-start border-warning border-4 bg-warning bg-opacity-10' : ''}">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div>
+                        <h6 class="mb-0 fw-bold">${wo.order_number}</h6>
+                        <small class="text-muted">${wo.product_code} — ${wo.product_name}</small>
+                    </div>
+                    <div class="text-end">
+                        <span class="badge fs-6 ${statusBadge(wo.status)}">
+                            ${statusLabel(wo.status)}
+                        </span>
+                        <div class="text-muted small mt-1">${wo.qty_planned} buc.</div>
+                    </div>
+                </div>
+
+                <div class="mb-2">
+                    ${wo.route_stations.map((rs, i) => `
+                        ${i > 0 ? '<span class="arrow">→</span>' : ''}
+                        <span class="station-chip station-${rs.op_status}">
+                            ${rs.station.code}
+                            ${rs.op_status === 'completed' ? '✓' : rs.op_status === 'in_progress' ? '●' : '○'}
+                        </span>
+                    `).join('')}
+                </div>
+
+                ${wo.has_anomaly ? `
+                <div class="mb-2">
+                    <span class="badge bg-warning text-dark">
+                        ⚠ Anomalie detectată la această comandă
+                    </span>
+                </div>` : ''}
+
+                <div class="d-flex gap-3 small text-muted mb-2">
+                    <span>FPY: <strong>${wo.kpis.fpy !== null ? wo.kpis.fpy + '%' : 'N/A'}</strong></span>
+                    <span>Productivitate: <strong>${wo.kpis.throughput !== null ? wo.kpis.throughput + ' u/h' : 'N/A'}</strong></span>
+                    <span>Rebut: <strong>${wo.kpis.scrap_rate !== null ? wo.kpis.scrap_rate + '%' : 'N/A'}</strong></span>
+                </div>
+
+                <button class="btn btn-sm btn-outline-secondary"
+                        onclick="showChart(${wo.id}, '${wo.order_number}')">
+                    📈 Vezi Grafic Stații
+                </button>
+            </div>
+        </div>
+    `).join('');
+    resizeCards();
+}
+
+function statusBadge(status) {
+    const map = {
+        'planned': 'bg-secondary',
+        'in_progress': 'bg-primary',
+        'completed': 'bg-success',
+        'cancelled': 'bg-danger'
+    };
+    return map[status] || 'bg-secondary';
+}
+
+function statusLabel(status) {
+    const map = {
+        'planned': 'Planificat',
+        'in_progress': 'În Execuție',
+        'completed': 'Finalizat',
+        'cancelled': 'Anulat'
+    };
+    return map[status] || status;
+}
+
+function resizeCards() {
+    const navbar = document.querySelector('nav').offsetHeight;
+    const header = document.querySelector('h4').offsetHeight;
+    const kpiRow = document.getElementById('kpiRow').offsetHeight;
+    const banner = document.querySelector('.alert-warning') ?
+                   document.querySelector('.alert-warning').offsetHeight + 16 : 0;
+    const sectionTitle = document.querySelector('.text-uppercase.fw-bold') ?
+                         document.querySelector('.text-uppercase.fw-bold').offsetHeight + 16 : 24;
+    const padding = 32;
+
+    const available = window.innerHeight - navbar - header - kpiRow - banner - sectionTitle - padding;
+
+    const woCards = document.getElementById('wo-cards');
+    woCards.style.height = available + 'px';
+    woCards.style.overflowY = 'auto';
+    woCards.style.paddingRight = '4px';
+
+    const feedCard = document.getElementById('mqttFeed').closest('.card');
+    feedCard.style.height = available + 'px';
+    feedCard.style.overflowY = 'hidden';
+    document.getElementById('mqttFeed').style.maxHeight = (available - 48) + 'px';
+}
+
+loadKpis();
+loadFeed();
+loadWoCards();
+setInterval(loadFeed, 5000);
+setInterval(loadKpis, 10000);
+setInterval(loadWoCards, 10000);
+resizeCards();
+window.addEventListener('resize', resizeCards);
+</script>
+{% endblock %}

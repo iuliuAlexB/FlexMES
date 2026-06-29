@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block title %}Panou Operator — FlexMES{% endblock %}
+
+{% block content %}
+<style>
+    body { overflow: hidden; }
+    .container-fluid { overflow: hidden; }
+</style>
+<h4 class="mb-3">🔧 Panou Operator — <span class="badge bg-dark">S4: Inspecție QC</span></h4>
+
+<div class="row g-3">
+    <!-- S4 Queue and Manual Form -->
+    <div class="col-lg-7">
+        <div id="s4-queue">
+            <div class="card border-0 shadow-sm">
+                <div class="card-body text-center py-5 text-muted">
+                    <div class="fs-1 mb-2">⏳</div>
+                    <p>Se încarcă...</p>
+                </div>
+            </div>
+        </div>
+        <input type="hidden" id="csrf-token-value" value="{{ csrf_token }}">
+    </div>
+
+    <!-- Right column: recent logs + feed -->
+    <div class="col-lg-5">
+        <!-- Recent logs -->
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header bg-white fw-semibold">Ultimele 10 Log-uri</div>
+            <div class="table-responsive">
+                <table class="table table-sm mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Stație</th>
+                            <th>WO</th>
+                            <th>Bun</th>
+                            <th>Rebut</th>
+                            <th>Sursă</th>
+                            <th>Anomalie</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for log in recent_logs %}
+                    <tr class="{% if log.is_anomaly %}table-warning{% endif %}">
+                        <td><span class="badge bg-secondary">S{{ log.station_id }}</span></td>
+                        <td class="small">WO-{{ '%03d' % log.work_order_id }}</td>
+                        <td class="text-success fw-semibold">{{ log.qty_good }}</td>
+                        <td class="text-danger fw-semibold">{{ log.qty_scrap }}</td>
+                        <td>
+                            {% if log.source == 'mqtt' %}
+                            <span class="badge bg-dark">MQTT</span>
+                            {% else %}
+                            <span class="badge bg-info text-dark">Manual</span>
+                            {% endif %}
+                        </td>
+                        <td>{% if log.is_anomaly %}<span class="badge bg-warning text-dark">⚠</span>{% else %}—{% endif %}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6" class="text-center text-muted py-2 small">Niciun log înregistrat</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Live MQTT feed -->
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white fw-semibold">Activitate IIoT Live</div>
+            <div class="card-body p-0">
+                <div id="mqttFeed" style="max-height:300px; overflow-y:auto;">
+                    <div class="text-center text-muted py-3 small">Se încarcă...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function loadS4Queue() {
+    // Nu re-renderiza daca userul scrie intr-un input din container
+    const container = document.getElementById('s4-queue');
+    const activeEl = document.activeElement;
+    if (container.contains(activeEl) && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+        return;
+    }
+
+    fetch('/api/s4/queue')
+        .then(r => r.json())
+        .then(ops => renderS4Queue(ops));
+}
+
+function renderS4Queue(ops) {
+    const container = document.getElementById('s4-queue');
+    if (!ops.length) {
+        container.innerHTML = `
+            <div class="card border-0 shadow-sm">
+                <div class="card-body text-center py-5 text-muted">
+                    <div class="fs-1 mb-2">⏳</div>
+                    <p>Nicio comandă activă la S4 în acest moment.</p>
+                    <p class="small">Stațiile S1, S2, S3 sunt automatizate via MQTT.</p>
+                </div>
+            </div>`;
+        return;
+    }
+
+    container.innerHTML = ops.map(op => `
+        <div class="card border-0 shadow-sm mb-3 border-start border-primary border-4">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <div>
+                        <h5 class="mb-0 fw-bold">${op.order_number}</h5>
+                        <span class="text-muted">${op.product_code} — ${op.product_name}</span>
+                    </div>
+                    <span class="badge bg-primary fs-6">${op.qty_planned} buc. planificate</span>
+                </div>
+
+                <div class="mb-3">
+                    ${op.route_ops.map((r, i) => `
+                        ${i > 0 ? '<span class="text-muted">→</span>' : ''}
+                        <span class="station-chip station-${r.status}">
+                            ${r.code}
+                            ${r.status === 'completed' ? '✓' : r.status === 'in_progress' ? '●' : '○'}
+                        </span>
+                    `).join('')}
+                </div>
+
+                <div class="alert alert-warning py-2 small mb-3">
+                    ⚠ Finalizarea S4 va <strong>închide automat</strong> comanda de producție.
+                </div>
+
+                <form method="post" action="/api/s4/complete">
+                    <input type="hidden" name="csrf_token" value="${getCsrfToken()}">
+                    <input type="hidden" name="work_order_id" value="${op.work_order_id}">
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Cantitate Bună</label>
+                            <input type="number" name="qty_good" class="form-control" min="0" value="0" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small fw-semibold">Cantitate Rebut</label>
+                            <input type="number" name="qty_scrap" class="form-control" min="0" value="0" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-success mt-3 w-100"
+                            onclick="return confirm('Finalizezi inspecția QC pentru ${op.order_number}?')">
+                        ✓ Finalizează Inspecție QC
+                    </button>
+                </form>
+            </div>
+        </div>
+    `).join('');
+    resizeOperator();
+}
+
+function getCsrfToken() {
+    return document.getElementById('csrf-token-value')?.value || '';
+}
+
+function loadFeed() {
+    fetch('/api/mqtt/feed')
+        .then(r => r.json())
+        .then(msgs => {
+            const el = document.getElementById('mqttFeed');
+            if (!msgs.length) {
+                el.innerHTML = '<div class="text-center text-muted py-3 small">Nicio activitate MQTT</div>';
+                return;
+            }
+            el.innerHTML = [...msgs].reverse().map(m => `
+                <div class="border-bottom px-3 py-2 small">
+                    <span class="badge bg-dark me-1">${m.station}</span>
+                    WO-${String(m.work_order_id).padStart(3,'0')}
+                    <span class="text-success ms-1">✓ ${m.qty_good}</span>
+                    <span class="text-danger ms-1">✗ ${m.qty_scrap}</span>
+                    <div class="text-muted" style="font-size:.7rem;">${m.timestamp.replace('T',' ').substring(0,19)}</div>
+                </div>
+            `).join('');
+        });
+}
+
+loadS4Queue();
+loadFeed();
+setInterval(loadS4Queue, 5000);
+setInterval(loadFeed, 5000);
+
+function resizeOperator() {
+    const navbar = document.querySelector('nav').offsetHeight;
+    const header = document.querySelector('h4').offsetHeight;
+    const padding = 32;
+    const available = window.innerHeight - navbar - header - padding;
+
+    const s4queue = document.getElementById('s4-queue');
+    s4queue.style.height = available + 'px';
+    s4queue.style.overflowY = 'auto';
+    s4queue.style.paddingRight = '4px';
+
+    const logsCard = document.querySelector('.col-lg-5 .card.mb-3');
+    const logsCardHeight = logsCard ? logsCard.offsetHeight : 400;
+
+    const feedAvailable = available - logsCardHeight - 16;
+    const mqttFeed = document.getElementById('mqttFeed');
+    mqttFeed.style.height = Math.max(feedAvailable, 150) + 'px';
+    mqttFeed.style.overflowY = 'auto';
+    mqttFeed.style.maxHeight = 'none';
+}
+
+resizeOperator();
+window.addEventListener('resize', resizeOperator);
+
+</script>
+{% endblock %}

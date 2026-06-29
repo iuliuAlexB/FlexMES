@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Gestionare Utilizatori — FlexMES{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">👥 Gestionare Utilizatori</h4>
+    <button class="btn btn-dark" data-bs-toggle="modal" data-bs-target="#createUserModal">
+        + Utilizator Nou
+    </button>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead class="table-dark">
+                <tr>
+                    <th>#</th>
+                    <th>Utilizator</th>
+                    <th>Rol</th>
+                    <th>Status</th>
+                    <th>Creat la</th>
+                    <th>Acțiuni</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for user in users %}
+            <tr class="{% if not user.is_active %}table-secondary{% endif %}">
+                <td class="text-muted small">{{ user.id }}</td>
+                <td class="fw-semibold">{{ user.username }}</td>
+                <td>
+                    <span class="badge {% if user.role == 'manager' %}bg-success{% else %}bg-info{% endif %}">
+                        {{ user.role }}
+                    </span>
+                </td>
+                <td>
+                    {% if user.is_active %}
+                    <span class="badge bg-success">Activ</span>
+                    {% else %}
+                    <span class="badge bg-secondary">Inactiv</span>
+                    {% endif %}
+                </td>
+                <td class="small text-muted">{{ user.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-secondary"
+                            data-bs-toggle="modal"
+                            data-bs-target="#editUserModal"
+                            onclick="fillEditModal({{ user.id }}, '{{ user.username }}', '{{ user.role }}')">
+                        ✎ Editează
+                    </button>
+                    {% if user.id not in (1, 2) and user.is_active %}
+                    <form method="post" action="/users/{{ user.id }}/deactivate" class="d-inline"
+                          onsubmit="return confirm('Dezactivezi utilizatorul {{ user.username }}?')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">Dezactivează</button>
+                    </form>
+                    {% elif user.id in (1, 2) %}
+                    <button class="btn btn-sm btn-outline-secondary" disabled
+                            title="Cont de sistem — nu poate fi dezactivat">Protejat</button>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-center text-muted py-4">Nu există utilizatori.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Create User Modal -->
+<div class="modal fade" id="createUserModal" tabindex="-1">
+    <div class="modal-dialog">
+        <form method="post" action="/users">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Utilizator Nou</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Nume utilizator</label>
+                        <input type="text" name="username" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Parolă <span class="text-muted small">(minim 6 caractere)</span></label>
+                        <input type="password" name="password" class="form-control" minlength="6" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Rol</label>
+                        <select name="role" class="form-select" required>
+                            <option value="manager">Manager</option>
+                            <option value="operator">Operator</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Anulează</button>
+                    <button type="submit" class="btn btn-dark">Creează</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit User Modal -->
+<div class="modal fade" id="editUserModal" tabindex="-1">
+    <div class="modal-dialog">
+        <form method="post" id="editUserForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Editează Utilizator</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Nume utilizator</label>
+                        <input type="text" name="username" id="editUsername" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Rol</label>
+                        <select name="role" id="editRole" class="form-select" required>
+                            <option value="manager">Manager</option>
+                            <option value="operator">Operator</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Anulează</button>
+                    <button type="submit" class="btn btn-dark">Salvează</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function fillEditModal(userId, username, role) {
+    document.getElementById('editUserForm').action = `/users/${userId}/update`;
+    document.getElementById('editUsername').value = username;
+    document.getElementById('editRole').value = role;
+}
+</script>
+{% endblock %}

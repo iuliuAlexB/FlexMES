@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}FlexMES{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <style>
+        .station-chip { display:inline-block; padding:2px 8px; border-radius:12px; font-size:.75rem; font-weight:600; margin:0 2px; }
+        .station-completed { background:#198754; color:#fff; }
+        .station-in_progress { background:#0d6efd; color:#fff; animation: pulse 1.5s infinite; }
+        .station-pending { background:#6c757d; color:#fff; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+        .arrow { color:#aaa; font-size:.9rem; }
+        .navbar-brand { font-weight:700; letter-spacing:1px; }
+    </style>
+</head>
+<body class="bg-light">
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="/">🏭 FlexMES</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navMenu">
+            {% if current_user %}
+            <ul class="navbar-nav me-auto">
+                {% if current_user.role == 'manager' %}
+                <li class="nav-item"><a class="nav-link" href="/dashboard">Tablou de Bord</a></li>
+                <li class="nav-item"><a class="nav-link" href="/cockpit">Gestionare Comenzi</a></li>
+                <li class="nav-item"><a class="nav-link" href="/routing">Rute Produse</a></li>
+                <li class="nav-item"><a class="nav-link" href="/users">Utilizatori</a></li>
+                {% endif %}
+                <li class="nav-item"><a class="nav-link" href="/operator">Operator</a></li>
+            </ul>
+            <div class="d-flex align-items-center gap-2">
+                <span class="text-white-50 small">{{ current_user.username }}</span>
+                <span class="badge {% if current_user.role == 'manager' %}bg-success{% else %}bg-info{% endif %}">
+                    {{ current_user.role }}
+                </span>
+                <form action="/logout" method="post" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="btn btn-sm btn-outline-light">Deconectare</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</nav>
+
+<div class="container-fluid mt-3 px-4">
+    {% for msg in flash_messages %}
+    <div class="alert alert-{{ msg.category }} alert-dismissible fade show" role="alert">
+        {{ msg.message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+
+    {% block content %}{% endblock %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

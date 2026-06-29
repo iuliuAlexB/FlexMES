@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Configurare Routing — FlexMES{% endblock %}
+
+{% block content %}
+<h4 class="mb-3">⚙ Configurare Rute Produse</h4>
+
+<div class="row g-3">
+    {% for product in products %}
+    <div class="col-md-6">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <div>
+                    <span class="badge bg-secondary me-2">{{ product.code }}</span>
+                    <strong>{{ product.name }}</strong>
+                </div>
+                <button class="btn btn-sm btn-outline-dark"
+                        onclick="toggleEdit({{ product.id }})">
+                    ✎ Editează
+                </button>
+            </div>
+            <div class="card-body">
+                <!-- Current routing display -->
+                <div id="routing-display-{{ product.id }}">
+                    {% set route_stations = product_routing_stations[product.id] %}
+                    {% if route_stations %}
+                    <div class="d-flex flex-wrap align-items-center gap-1">
+                        {% for s in route_stations %}
+                        {% if not loop.first %}<span class="text-muted">→</span>{% endif %}
+                        <span class="badge bg-dark">{{ s.code }} {{ s.name }}</span>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <span class="text-muted fst-italic">Niciun routing definit</span>
+                    {% endif %}
+                </div>
+
+                <!-- Edit form (hidden by default) -->
+                <div id="routing-edit-{{ product.id }}" class="d-none mt-3">
+                    <p class="text-muted small mb-2">Selectează stațiile (S4 QC este obligatoriu):</p>
+                    {% set checked_ids = product_routing_ids[product.id] %}
+                    {% for station in stations %}
+                    <div class="form-check">
+                        <input class="form-check-input routing-cb"
+                               type="checkbox"
+                               id="st-{{ product.id }}-{{ station.id }}"
+                               value="{{ station.id }}"
+                               data-product="{{ product.id }}"
+                               {% if station.id in checked_ids %}checked{% endif %}>
+                        <label class="form-check-label" for="st-{{ product.id }}-{{ station.id }}">
+                            <span class="badge bg-secondary me-1">{{ station.code }}</span>
+                            {{ station.name }}
+                            {% if station.code == 'S4' %}
+                            <span class="text-danger small">(obligatoriu)</span>
+                            {% endif %}
+                        </label>
+                    </div>
+                    {% endfor %}
+                    <div class="d-flex gap-2 mt-3">
+                        <button class="btn btn-sm btn-success"
+                                onclick="saveRouting({{ product.id }})">
+                            💾 Salvează Ruta
+                        </button>
+                        <button class="btn btn-sm btn-secondary"
+                                onclick="toggleEdit({{ product.id }})">
+                            Anulează
+                        </button>
+                    </div>
+                    <div id="routing-msg-{{ product.id }}" class="mt-2 small"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="card border-0 shadow-sm bg-light mt-4">
+    <div class="card-body small text-muted">
+        <strong>Reguli routing:</strong>
+        S4 Inspecție QC trebuie să fie prezent în orice routing. |
+        Nu se poate modifica routing-ul unui produs cu comenzi planificate sau în execuție.
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleEdit(productId) {
+    document.getElementById(`routing-display-${productId}`).classList.toggle('d-none');
+    document.getElementById(`routing-edit-${productId}`).classList.toggle('d-none');
+}
+
+const csrfToken = "{{ csrf_token }}";
+
+async function saveRouting(productId) {
+    const checkboxes = document.querySelectorAll(`input.routing-cb[data-product="${productId}"]:checked`);
+    let stationIds = Array.from(checkboxes).map(cb => parseInt(cb.value));
+
+    // S4 (station id=4) is always required
+    if (!stationIds.includes(4)) stationIds.push(4);
+    stationIds.sort((a, b) => a - b);
+
+    const msgEl = document.getElementById(`routing-msg-${productId}`);
+    msgEl.textContent = '';
+
+    try {
+        const resp = await fetch(`/api/routing/${productId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': csrfToken
+            },
+            body: JSON.stringify({ station_ids: stationIds })
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+            msgEl.className = 'mt-2 small text-success';
+            msgEl.textContent = '✓ Routing salvat cu succes';
+            setTimeout(() => location.reload(), 800);
+        } else {
+            msgEl.className = 'mt-2 small text-danger';
+            msgEl.textContent = '✗ ' + (data.error || 'Eroare la salvare');
+        }
+    } catch (e) {
+        msgEl.className = 'mt-2 small text-danger';
+        msgEl.textContent = '✗ Eroare de rețea';
+    }
+}
+</script>
+{% endblock %}
